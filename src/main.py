@@ -19,9 +19,13 @@ class State(Enum):
     RETURNING = 3
 
 
+PI = 3.1415926535897
+
 def deg2rad(degrees):
-	PI = 3.1415926535897
-	return degrees * 2 * PI / 360
+    return degrees * 2 * PI / 360
+
+def rad2deg(rad):
+    return rad * 360 / PI / 2
 
 
 class UsiAngryTurtle:
@@ -32,18 +36,21 @@ class UsiAngryTurtle:
 
         # reset turtlesim
         rospy.wait_for_service('reset')
-    	resetter = rospy.ServiceProxy('reset', std_srvs.srv.Empty())
-    	resetter()
+        resetter = rospy.ServiceProxy('reset', std_srvs.srv.Empty())
+        resetter()
 
         # spawning new writer turtle
+        self.init_x = 1
+        self.init_y = 9
+        self.init_theta = deg2rad(270)
         rospy.wait_for_service('spawn')
-    	spawner = rospy.ServiceProxy('spawn', turtlesim.srv.Spawn)
-    	spawner(1, 9, deg2rad(270), 'turtle_writer')
+        spawner = rospy.ServiceProxy('spawn', turtlesim.srv.Spawn)
+        spawner(self.init_x, self.init_y, self.init_theta, 'turtle_writer')
 
         # reset turtlesim
         rospy.wait_for_service('turtle_writer/set_pen')
-    	self.writer_set_pen = rospy.ServiceProxy('turtle_writer/set_pen', turtlesim.srv.SetPen)
-    	self.writer_set_pen_off(0)
+        self.writer_set_pen = rospy.ServiceProxy('turtle_writer/set_pen', turtlesim.srv.SetPen)
+        self.writer_set_pen_off(0)
 
         # Publish to the topic '/turtleX/cmd_vel'
         self.velocity_publisher = rospy.Publisher('/turtle_writer/cmd_vel',
@@ -51,62 +58,32 @@ class UsiAngryTurtle:
 
         # A subscriber to the topic '/turtleX/pose'
         self.pose_subscriber = rospy.Subscriber('/turtle_writer/pose',
-                                                Pose, self.turtlesim_pose_callback)
+                                                Pose, self.writer_pose_callback)
         
-    	self.state = State.WRITING
-        self.set_linear = linear
-        self.set_angular = angular
-
         self.pose = Pose()
         self.rate = rospy.Rate(10)
 
 
     def writer_set_pen_off(self, off):
-    	self.writer_set_pen(200,200,200,2,off)
+        self.writer_set_pen(200,200,200,2,off)
 
 
-    def turtlesim_pose_callback(self, data):
+    def writer_pose_callback(self, data):
         """A new turltesim Pose has arrived. See turtlesim Pose msg definition."""
         
         self.pose = data
         self.pose.x = round(self.pose.x, 4)
         self.pose.y = round(self.pose.y, 4)
+
+        # TODO tmp
+        # if self.state == State.WRITING and self.pose.x > 3:
+        #     self.turtle_start_return()
+
         # rospy.loginfo("Pose received (%.5f, %.5f, %.5f) (%.5f, %.5f)" % (data.x, data.y, data.theta, data.linear_velocity, data.angular_velocity))
 
 
-    def rotate(self, angle, clockwise=False, speed=100):
-
-	    vel_msg = Twist()
-
-	    # Converting from angles to radians
-	    relative_angle = deg2rad(angle)
-	    angular_speed = deg2rad(speed)
-
-	    # We wont use linear components
-	    vel_msg.linear.x=0
-	    vel_msg.linear.y=0
-	    vel_msg.linear.z=0
-	    vel_msg.angular.x = 0
-	    vel_msg.angular.y = 0
-
-	    # Checking if our movement is CW or CCW
-	    if clockwise:
-	        vel_msg.angular.z = -abs(angular_speed)
-	    else:
-	        vel_msg.angular.z = abs(angular_speed)
-
-	    # Setting the current time for distance calculus
-	    t0 = rospy.Time.now().to_sec()
-	    current_angle = 0
-
-	    while current_angle < relative_angle and not rospy.is_shutdown():
-	        self.velocity_publisher.publish(vel_msg)
-	        t1 = rospy.Time.now().to_sec()
-	        current_angle = angular_speed*(t1-t0)
-
-	    # Forcing our robot to stop
-	    vel_msg.angular.z = 0
-	    self.velocity_publisher.publish(vel_msg)
+    def correct_state(self, state):
+        return not rospy.is_shutdown() and (state == None or state == self.state)
 
 
     def linear_vel(self, goal_pose, constant):
@@ -127,15 +104,14 @@ class UsiAngryTurtle:
                     pow((goal_pose.y - self.pose.y), 2))
 
 
-    def move2goal(self, x, y, angular_constant=6, linear_constant=1.5):
+    def turtle_move2goal(self, state, x, y, angular_constant=6, linear_constant=1.5):
         goal_pose = Pose()
         goal_pose.x = x
         goal_pose.y = y
         distance_tolerance = 1
         vel_msg = Twist()
 
-        while self.euclidean_distance(goal_pose) >= distance_tolerance and not rospy.is_shutdown():
-
+        while self.correct_state(state) and self.euclidean_distance(goal_pose) >= distance_tolerance:
             # Porportional Controller
             # https://en.wikipedia.org/wiki/Proportional_control
 
@@ -154,75 +130,108 @@ class UsiAngryTurtle:
             self.rate.sleep()
 
         # Stopping our robot after the movement is over.
+        self.turtle_stop()
+
+
+    def turtle_rotate(self, state, angle, clockwise=False, speed=100):
+
+        vel_msg = Twist()
+
+        # Converting from angles to radians
+        relative_angle = deg2rad(angle)
+        angular_speed = deg2rad(speed)
+
+        # We wont use linear components
+        vel_msg.linear.x=0
+        vel_msg.linear.y=0
+        vel_msg.linear.z=0
+        vel_msg.angular.x = 0
+        vel_msg.angular.y = 0
+
+        # Checking if our movement is CW or CCW
+        if clockwise:
+            vel_msg.angular.z = -abs(angular_speed)
+        else:
+            vel_msg.angular.z = abs(angular_speed)
+
+        # Setting the current time for distance calculus
+        t0 = rospy.Time.now().to_sec()
+        current_angle = 0
+
+        while self.correct_state(state) and current_angle < relative_angle:
+            self.velocity_publisher.publish(vel_msg)
+            self.rate.sleep()
+            t1 = rospy.Time.now().to_sec()
+            current_angle = angular_speed*(t1-t0)
+
+        # Forcing our robot to stop
+        self.turtle_stop()
+        
+
+    def turtle_stop(self):
+        vel_msg = Twist()
         vel_msg.linear.x = 0
         vel_msg.angular.z = 0
         self.velocity_publisher.publish(vel_msg)
+        self.rate.sleep()
 
 
-    def write(self):
-    	# U
-	    usi.move2goal(1, 9)
-	    usi.move2goal(1, 4)
-	    usi.move2goal(2, 3, 4)
-	    usi.move2goal(3, 5, 4)
-	    usi.move2goal(3, 10)
-	    # S
-	    usi.rotate(90, True)
-	    usi.writer_set_pen_off(1)
-	    usi.move2goal(7, 10)
-	    usi.rotate(180, True)
-	    usi.writer_set_pen_off(0)
-	    usi.move2goal(5, 9)
-	    usi.move2goal(4, 7.5)
-	    usi.move2goal(5, 6)
-	    usi.move2goal(6, 6)
-	    usi.move2goal(7, 4.5)
-	    usi.move2goal(6, 3)
-	    usi.move2goal(3, 3)
-	    # I
-	    usi.rotate(180, True)
-	    usi.writer_set_pen_off(1)
-	    usi.move2goal(9, 3)
-	    usi.rotate(90, False)
-	    usi.writer_set_pen_off(0)
-	    usi.move2goal(9, 10)
+    def turtle_start_write(self):
+        rospy.loginfo('Start WRITING')
+        self.state = State.WRITING
+        self.turtle_stop()
+        # U
+        self.turtle_move2goal(State.WRITING, 1, 9)
+        self.turtle_move2goal(State.WRITING, 1, 4)
+        self.turtle_move2goal(State.WRITING, 2, 3, 4)
+        self.turtle_move2goal(State.WRITING, 3, 5, 4)
+        self.turtle_move2goal(State.WRITING, 3, 10)
+        # repositioning
+        self.writer_set_pen_off(1)
+        self.turtle_rotate(State.WRITING, 90, True)
+        self.turtle_move2goal(State.WRITING, 7, 10)
+        self.turtle_rotate(State.WRITING, 180, True)
+        self.writer_set_pen_off(0)
+        # S
+        self.turtle_move2goal(State.WRITING, 5, 9)
+        self.turtle_move2goal(State.WRITING, 4, 7.5)
+        self.turtle_move2goal(State.WRITING, 5, 6)
+        self.turtle_move2goal(State.WRITING, 6, 6)
+        self.turtle_move2goal(State.WRITING, 7, 4.5)
+        self.turtle_move2goal(State.WRITING, 6, 3)
+        self.turtle_move2goal(State.WRITING, 3, 3)
+        # repositioning
+        self.writer_set_pen_off(1)
+        self.turtle_rotate(State.WRITING, 180, True)
+        self.turtle_move2goal(State.WRITING, 9, 3)
+        self.turtle_rotate(State.WRITING, 90, False)
+        self.writer_set_pen_off(0)
+        # I
+        self.turtle_move2goal(State.WRITING, 9, 10)
 
 
-    def basic_move(self):
-        """Moves the turtle"""
-        vel_msg = Twist()
-        vel_msg.linear.x = self.set_linear #0.2 # m/s
-        vel_msg.angular.z = self.set_angular #0.0 # rad/s
-
-        # single message
-        #self.velocity_publisher.publish(vel_msg)
-        
-        # several messages at a rate
-        while not rospy.is_shutdown():
-            # Publishing vel_msg
-            self.velocity_publisher.publish(vel_msg)
-            # .. at the desired rate.
-            self.rate.sleep()
-
-        # waiting until shutdown flag (e.g. ctrl+c)
-        rospy.spin()
-
+    def turtle_start_return(self):
+        rospy.loginfo('Start RETURNING')
+        self.state = State.RETURNING
+        self.turtle_stop()
+        # rospy.loginfo(rad2deg(self.init_theta))
+        # rospy.loginfo(rad2deg(self.pose.theta))
+        # rospy.loginfo(rad2deg(self.init_theta) - rad2deg(self.pose.theta))
+        # self.turtle_rotate(State.RETURNING, 120)
+        self.turtle_move2goal(State.RETURNING, self.init_x, self.init_y)
+        # self.turtle_rotate(State.RETURNING, rad2deg(self.init_theta) - rad2deg(self.pose.theta))
 
 
 
 if __name__ == '__main__':
-    param_linear = 0.5
-    param_angular = 0.0
 
-    if len(sys.argv) == 3:
-        param_linear = sys.argv[1]
-        param_angular = sys.argv[2]
-        print "Requested linear and angular velocities: %f, %f" % (param_linear, param_angular)
-    else:
-        print "Not all parameters were sent, working with default linear and angular velocities"
+    usi = UsiAngryTurtle()
+    
+    # usi.turtle_move2goal(None, 10, 10)
+    # usi.turtle_rotate(None, 180)
+    # usi.turtle_move2goal(None, 1, 9, 6, 0.8)
 
-    usi = UsiAngryTurtle(param_linear, param_angular)
-    usi.write()
+    usi.turtle_start_write()
     
     rospy.spin()
 
