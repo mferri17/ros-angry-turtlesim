@@ -76,8 +76,8 @@ class UsiAngryTurtle:
         self.pose.y = round(self.pose.y, 4)
 
         # TODO tmp
-        # if self.state == State.WRITING and self.pose.x > 3:
-        #     self.turtle_start_return()
+        if self.state == State.WRITING and self.pose.x > 3:
+            self.turtle_start_return()
 
         # rospy.loginfo("Pose received (%.5f, %.5f, %.5f) (%.5f, %.5f)" % (data.x, data.y, data.theta, data.linear_velocity, data.angular_velocity))
 
@@ -94,9 +94,12 @@ class UsiAngryTurtle:
         """See video: https://www.youtube.com/watch?v=Qh15Nol5htM."""
         return atan2(goal_pose.y - self.pose.y, goal_pose.x - self.pose.x)
 
+    def angle_difference(self, angle1, angle2):
+    	return np.arctan2(np.sin(angle1-angle2), np.cos(angle1-angle2))
+
     def angular_vel(self, goal_pose, constant):
         """See video: https://www.youtube.com/watch?v=Qh15Nol5htM."""
-        return constant * (self.steering_angle(goal_pose) - self.pose.theta)
+        return constant * self.angle_difference(self.steering_angle(goal_pose), self.pose.theta)
 
     def euclidean_distance(self, goal_pose):
         """Euclidean distance between current pose and the goal."""
@@ -111,7 +114,11 @@ class UsiAngryTurtle:
         distance_tolerance = 1
         vel_msg = Twist()
 
+        rospy.loginfo(state)
+
         while self.correct_state(state) and self.euclidean_distance(goal_pose) >= distance_tolerance:
+            rospy.loginfo("%s %s" % (goal_pose.x, goal_pose.y))
+
             # Porportional Controller
             # https://en.wikipedia.org/wiki/Proportional_control
 
@@ -130,7 +137,7 @@ class UsiAngryTurtle:
             self.rate.sleep()
 
         # Stopping our robot after the movement is over.
-        self.turtle_stop()
+        # self.turtle_stop()
 
 
     def turtle_rotate(self, state, angle, clockwise=False, speed=100):
@@ -165,7 +172,7 @@ class UsiAngryTurtle:
             current_angle = angular_speed*(t1-t0)
 
         # Forcing our robot to stop
-        self.turtle_stop()
+        # self.turtle_stop()
         
 
     def turtle_stop(self):
@@ -189,7 +196,7 @@ class UsiAngryTurtle:
         # repositioning
         self.writer_set_pen_off(1)
         self.turtle_rotate(State.WRITING, 90, True)
-        self.turtle_move2goal(State.WRITING, 7, 10)
+        self.turtle_move2goal(State.WRITING, 7, 9)
         self.turtle_rotate(State.WRITING, 180, True)
         self.writer_set_pen_off(0)
         # S
@@ -208,28 +215,28 @@ class UsiAngryTurtle:
         self.writer_set_pen_off(0)
         # I
         self.turtle_move2goal(State.WRITING, 9, 10)
+        self.turtle_stop()
 
 
     def turtle_start_return(self):
         rospy.loginfo('Start RETURNING')
         self.state = State.RETURNING
         self.turtle_stop()
+        self.rate.sleep()
         # rospy.loginfo(rad2deg(self.init_theta))
         # rospy.loginfo(rad2deg(self.pose.theta))
         # rospy.loginfo(rad2deg(self.init_theta) - rad2deg(self.pose.theta))
         # self.turtle_rotate(State.RETURNING, 120)
         self.turtle_move2goal(State.RETURNING, self.init_x, self.init_y)
         # self.turtle_rotate(State.RETURNING, rad2deg(self.init_theta) - rad2deg(self.pose.theta))
+        self.turtle_stop()
+
 
 
 
 if __name__ == '__main__':
 
     usi = UsiAngryTurtle()
-    
-    # usi.turtle_move2goal(None, 10, 10)
-    # usi.turtle_rotate(None, 180)
-    # usi.turtle_move2goal(None, 1, 9, 6, 0.8)
 
     usi.turtle_start_write()
     
