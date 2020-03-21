@@ -3,6 +3,7 @@ import rospy
 import sys
 
 import numpy as np
+import random
 from math import pow,atan2,sqrt
 from enum import Enum
 
@@ -31,59 +32,60 @@ def rad2deg(rad):
 class UsiAngryTurtle:
 
     def __init__(self, linear=0.2, angular=0.0):
-        """init"""
+
         rospy.init_node('usi_assignment1', anonymous=True)
 
-        # reset turtlesim
+        rospy.wait_for_service('clear')
+        self.clear = rospy.ServiceProxy('clear', std_srvs.srv.Empty())
+
+        rospy.wait_for_service('kill')
+        self.turtle_kill = rospy.ServiceProxy('kill', turtlesim.srv.Kill)
+
         rospy.wait_for_service('reset')
-        resetter = rospy.ServiceProxy('reset', std_srvs.srv.Empty())
-        resetter()
+        self.reset = rospy.ServiceProxy('reset', std_srvs.srv.Empty())
+        self.reset()
 
-        # spawning new writer turtle
-        self.init_x = 1
-        self.init_y = 9
-        self.init_theta = deg2rad(270)
         rospy.wait_for_service('spawn')
-        spawner = rospy.ServiceProxy('spawn', turtlesim.srv.Spawn)
-        spawner(self.init_x, self.init_y, self.init_theta, 'turtle_writer')
+        self.spawn = rospy.ServiceProxy('spawn', turtlesim.srv.Spawn)
+        self.spawn(random.randint(1,10), random.randint(1,10), deg2rad(random.randint(1,360)), 'turtle_writer')
 
-        # reset turtlesim
+        rospy.wait_for_service('turtle1/set_pen')
+        self.offender_set_pen = rospy.ServiceProxy('turtle1/set_pen', turtlesim.srv.SetPen)
+        self.offender_set_pen(0,0,0,0,1) # default function
+
         rospy.wait_for_service('turtle_writer/set_pen')
         self.writer_set_pen = rospy.ServiceProxy('turtle_writer/set_pen', turtlesim.srv.SetPen)
-        self.writer_set_pen_off(0)
+        self.writer_set_pen_off(0) # custom function
+
 
         # Publish to the topic '/turtleX/cmd_vel'
-        self.velocity_publisher = rospy.Publisher('/turtle_writer/cmd_vel',
-                                                  Twist, queue_size=10)
+        self.velocity_publisher = rospy.Publisher('/turtle_writer/cmd_vel', Twist, queue_size=10)
 
         # A subscriber to the topic '/turtleX/pose'
-        self.pose_subscriber = rospy.Subscriber('/turtle_writer/pose',
-                                                Pose, self.writer_pose_callback)
+        self.writer_pose_subscriber = rospy.Subscriber('/turtle_writer/pose', Pose, self.writer_pose_callback)
+        self.offender_pose_subscriber = rospy.Subscriber('/turtle1/pose', Pose, self.offender_pose_callback)
         
+
         self.pose = Pose()
+        self.pose_offender = Pose()
         self.rate = rospy.Rate(10)
+        self.state = None
 
-
-    def writer_set_pen_off(self, off):
-        self.writer_set_pen(200,200,200,2,off)
 
 
     def writer_pose_callback(self, data):
-        """A new turltesim Pose has arrived. See turtlesim Pose msg definition."""
-        
         self.pose = data
         self.pose.x = round(self.pose.x, 4)
         self.pose.y = round(self.pose.y, 4)
 
-        # TODO tmp
-        if self.state == State.WRITING and self.pose.x > 3:
-            self.turtle_start_return()
+    def offender_pose_callback(self, data):
+        self.pose_offender = data
+        self.pose_offender.x = round(self.pose_offender.x, 4)
+        self.pose_offender.y = round(self.pose_offender.y, 4)
 
-        # rospy.loginfo("Pose received (%.5f, %.5f, %.5f) (%.5f, %.5f)" % (data.x, data.y, data.theta, data.linear_velocity, data.angular_velocity))
 
-
-    def correct_state(self, state):
-        return not rospy.is_shutdown() and (state == None or state == self.state)
+    def writer_set_pen_off(self, off):
+        self.writer_set_pen(200,200,200,2,off)
 
 
     def linear_vel(self, goal_pose, constant):
@@ -107,17 +109,14 @@ class UsiAngryTurtle:
                     pow((goal_pose.y - self.pose.y), 2))
 
 
-    def turtle_move2goal(self, state, x, y, angular_constant=6, linear_constant=1.5):
+    def turtle_move2goal(self, x, y, angular_constant=6, linear_constant=1.5):
         goal_pose = Pose()
         goal_pose.x = x
         goal_pose.y = y
         distance_tolerance = 1
         vel_msg = Twist()
 
-        rospy.loginfo(state)
-
-        while self.correct_state(state) and self.euclidean_distance(goal_pose) >= distance_tolerance:
-            rospy.loginfo("%s %s" % (goal_pose.x, goal_pose.y))
+        while not rospy.is_shutdown() and self.euclidean_distance(goal_pose) >= distance_tolerance:
 
             # Porportional Controller
             # https://en.wikipedia.org/wiki/Proportional_control
@@ -136,11 +135,10 @@ class UsiAngryTurtle:
             self.velocity_publisher.publish(vel_msg)
             self.rate.sleep()
 
-        # Stopping our robot after the movement is over.
-        # self.turtle_stop()
+        self.turtle_stop()
 
 
-    def turtle_rotate(self, state, angle, clockwise=False, speed=100):
+    def turtle_rotate(self, angle, clockwise=False, speed=100):
 
         vel_msg = Twist()
 
@@ -165,14 +163,13 @@ class UsiAngryTurtle:
         t0 = rospy.Time.now().to_sec()
         current_angle = 0
 
-        while self.correct_state(state) and current_angle < relative_angle:
+        while not rospy.is_shutdown() and current_angle < relative_angle:
             self.velocity_publisher.publish(vel_msg)
             self.rate.sleep()
             t1 = rospy.Time.now().to_sec()
             current_angle = angular_speed*(t1-t0)
 
-        # Forcing our robot to stop
-        # self.turtle_stop()
+        self.turtle_stop()
         
 
     def turtle_stop(self):
@@ -183,63 +180,80 @@ class UsiAngryTurtle:
         self.rate.sleep()
 
 
-    def turtle_start_write(self):
-        rospy.loginfo('Start WRITING')
-        self.state = State.WRITING
-        self.turtle_stop()
-        # U
-        self.turtle_move2goal(State.WRITING, 1, 9)
-        self.turtle_move2goal(State.WRITING, 1, 4)
-        self.turtle_move2goal(State.WRITING, 2, 3, 4)
-        self.turtle_move2goal(State.WRITING, 3, 5, 4)
-        self.turtle_move2goal(State.WRITING, 3, 10)
-        # repositioning
-        self.writer_set_pen_off(1)
-        self.turtle_rotate(State.WRITING, 90, True)
-        self.turtle_move2goal(State.WRITING, 7, 9)
-        self.turtle_rotate(State.WRITING, 180, True)
-        self.writer_set_pen_off(0)
-        # S
-        self.turtle_move2goal(State.WRITING, 5, 9)
-        self.turtle_move2goal(State.WRITING, 4, 7.5)
-        self.turtle_move2goal(State.WRITING, 5, 6)
-        self.turtle_move2goal(State.WRITING, 6, 6)
-        self.turtle_move2goal(State.WRITING, 7, 4.5)
-        self.turtle_move2goal(State.WRITING, 6, 3)
-        self.turtle_move2goal(State.WRITING, 3, 3)
-        # repositioning
-        self.writer_set_pen_off(1)
-        self.turtle_rotate(State.WRITING, 180, True)
-        self.turtle_move2goal(State.WRITING, 9, 3)
-        self.turtle_rotate(State.WRITING, 90, False)
-        self.writer_set_pen_off(0)
-        # I
-        self.turtle_move2goal(State.WRITING, 9, 10)
-        self.turtle_stop()
-
-
-    def turtle_start_return(self):
-        rospy.loginfo('Start RETURNING')
-        self.state = State.RETURNING
-        self.turtle_stop()
-        self.rate.sleep()
-        # rospy.loginfo(rad2deg(self.init_theta))
-        # rospy.loginfo(rad2deg(self.pose.theta))
-        # rospy.loginfo(rad2deg(self.init_theta) - rad2deg(self.pose.theta))
-        # self.turtle_rotate(State.RETURNING, 120)
-        self.turtle_move2goal(State.RETURNING, self.init_x, self.init_y)
-        # self.turtle_rotate(State.RETURNING, rad2deg(self.init_theta) - rad2deg(self.pose.theta))
-        self.turtle_stop()
-
-
 
 
 if __name__ == '__main__':
 
     usi = UsiAngryTurtle()
 
-    usi.turtle_start_write()
+    writing_poses = [
+        (-2, -2), (1, 11), (1, 8), # starting position
+        (-1, -1), (1, 3), (2, 2), (3, 4), (3, 10), # letter U
+        (-2, -2), (9,10), (6, 9), # repositioning
+        (-1, -1), (5, 9), (4, 7), (5, 5.5), (6, 5.5), (7, 4), (6, 2.5), (3, 2.5), # letter S
+        (-2, -2), (9, 2), (9, 3.5), # repositioning
+        (-1, -1), (9, 6), (9, 10) # letter I
+    ]
+
+    while(not rospy.is_shutdown()): # infinite loop
+
+        usi.state = State.WRITING                                           ####### Change Status: WRITING
+        rospy.loginfo(usi.state)
+
+        for index in range(len(writing_poses)): # writes USI over and over again
+
+            x = writing_poses[index][0]
+            y = writing_poses[index][1]
+
+            if x == -2:
+                usi.writer_set_pen_off(1)   # disable pen
+
+            elif x == -1:
+                usi.writer_set_pen_off(0)   # enable pen
+
+
+            else:                           # normal behaviour
+                vel_msg = Twist()
+                goal_pose = Pose()
+                goal_pose.x = x
+                goal_pose.y = y
+
+                while not rospy.is_shutdown() and usi.euclidean_distance(goal_pose) >= 1: # move to goal
+                    vel_msg.linear.x = usi.linear_vel(goal_pose, 1.5)
+                    vel_msg.angular.z = usi.angular_vel(goal_pose, 6)
+                    usi.velocity_publisher.publish(vel_msg)
+                    usi.rate.sleep()
+
+                    # Intercepting the offender
+                    if(usi.euclidean_distance(usi.pose_offender) < 2):
+                        usi.state = State.ANGRY                             ####### Change Status: ANGRY
+                        rospy.loginfo(usi.state)
+                        usi.writer_set_pen_off(0)
+
+                        # Following the offender
+                        while not rospy.is_shutdown() and usi.euclidean_distance(usi.pose_offender) >= 0.3:
+                            vel_msg.linear.x = usi.linear_vel(usi.pose_offender, 1.5)
+                            vel_msg.angular.z = usi.angular_vel(usi.pose_offender, 6)
+                            usi.velocity_publisher.publish(vel_msg)
+                            usi.rate.sleep()
+
+                        usi.turtle_stop()
+                        usi.turtle_kill('turtle1') # offender has been caught
+
+                        usi.state = State.RETURNING                         ####### Change Status: RETURNING
+                        rospy.loginfo(usi.state)
+                        break
+
+
+            # Returing to proper position
+            if usi.state == State.RETURNING:
+                usi.turtle_move2goal(writing_poses[1][0], writing_poses[1][1])
+                usi.clear()
+                usi.spawn(random.randint(1,10), random.randint(1,10), deg2rad(random.randint(1,360)), 'turtle1')
+                usi.offender_pose_subscriber = rospy.Subscriber('/turtle1/pose', Pose, usi.offender_pose_callback)
+                usi.offender_set_pen(0,0,0,0,1)
+                usi.rate.sleep()
+                break
+
     
     rospy.spin()
-
-
