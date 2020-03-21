@@ -240,6 +240,12 @@ if __name__ == '__main__':
                         usi.turtle_stop()
                         usi.turtle_kill('turtle1') # offender has been caught
 
+                        # NOTE: `rostopic echo /turtle1/pose` has 3 to 8 seconds delay after respawning
+                        # we update this coords in order to achieve a sort of bugfix (preventing offender to be detected where it is not)
+                        # anyway, this way we still prevent offender to be detected correctly during the first seconds of delay
+                        usi.pose_offender.x = -100 
+                        usi.pose_offender.y = -100
+
                         usi.state = State.RETURNING                         ####### Change Status: RETURNING
                         rospy.loginfo(usi.state)
                         break
@@ -250,7 +256,6 @@ if __name__ == '__main__':
                 usi.turtle_move2goal(writing_poses[1][0], writing_poses[1][1])
                 usi.clear()
                 usi.spawn(random.randint(1,10), random.randint(1,10), deg2rad(random.randint(1,360)), 'turtle1')
-                usi.offender_pose_subscriber = rospy.Subscriber('/turtle1/pose', Pose, usi.offender_pose_callback)
                 usi.offender_set_pen(0,0,0,0,1)
                 usi.rate.sleep()
                 break
