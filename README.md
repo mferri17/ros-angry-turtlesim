@@ -2,10 +2,14 @@
 
 Robotics 2020 - Università della Svizzera Italiana
 
-**Marco Ferri**
+**Marco Ferri - Assignment 1**
 
-**Assignment 1**: all the tasks has been implemented.
+All the tasks has been implemented.
 
+
+## Demo
+
+A working demo of the project can be find here: https://youtu.be/rWiowK1EY3U
 
 
 ## Get started
